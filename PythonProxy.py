@@ -82,11 +82,16 @@ Qual a diferen?a entre um proxy Elite, An?nimo e Transparente?
 """
 
 import socket, thread, select
+import re
 
 __version__ = '0.1.0 Draft 1'
 BUFLEN = 8192
 VERSION = 'Python Proxy/'+__version__
 HTTPVER = 'HTTP/1.1'
+#allow_hosts=("(php.net|python.org|github.com|akamai.net|gravatar.com|qiita.com|google.com|google.co.jp)")
+allow_hosts=(".*")
+deny_hosts=("(youtube.com|goo.ne.jp)")
+deny_images=("\.(jpg|jpeg|gif|bmp|png|flv|swf)$")
 
 class ConnectionHandler:
     def __init__(self, connection, address, timeout):
@@ -94,6 +99,8 @@ class ConnectionHandler:
         self.client_buffer = ''
         self.timeout = timeout
         self.method, self.path, self.protocol = self.get_base_header()
+        self.host = self.get_host()
+        self.acl()
         if self.method=='CONNECT':
             self.method_CONNECT()
         elif self.method in ('OPTIONS', 'GET', 'HEAD', 'POST', 'PUT',
@@ -102,13 +109,32 @@ class ConnectionHandler:
         self.client.close()
         self.target.close()
 
+    def acl(self):
+        if not re.search(allow_hosts, self.host):
+            print "[block allow] " + self.host
+            exit(0)
+        if re.search(deny_hosts, self.host):
+            print "[block deny ] " + self.host
+            exit(0)
+        if re.search(deny_images, self.path):
+            print "[block image] " + self.path
+            exit(0)
+
+    def get_host(self):
+        i = self.path.find(':443')
+        if i != -1:
+            return self.path
+        path = self.path[7:]
+        i = path.find('/')
+        return path[:i]        
+
     def get_base_header(self):
         while 1:
             self.client_buffer += self.client.recv(BUFLEN)
             end = self.client_buffer.find('\n')
             if end!=-1:
                 break
-        print '%s'%self.client_buffer[:end]#debug
+        #print '%s'%self.client_buffer[:end]#debug
         data = (self.client_buffer[:end+1]).split()
         self.client_buffer = self.client_buffer[end+1:]
         return data
@@ -121,7 +147,11 @@ class ConnectionHandler:
         self._read_write()        
 
     def method_others(self):
-        self.path = self.path[7:]
+        i = self.path.find(':443')
+        if i != -1:
+            self.path = self.path[8:]
+        else:
+            self.path = self.path[7:]
         i = self.path.find('/')
         host = self.path[:i]        
         path = self.path[i:]
@@ -138,7 +168,10 @@ class ConnectionHandler:
             host = host[:i]
         else:
             port = 80
-        (soc_family, _, _, _, address) = socket.getaddrinfo(host, port)[0]
+        try:
+            (soc_family, _, _, _, address) = socket.getaddrinfo(host, port)[0]
+        except:
+            print "[error _connect_target] " + host
         self.target = socket.socket(soc_family)
         self.target.connect(address)
 
@@ -153,7 +186,11 @@ class ConnectionHandler:
                 break
             if recv:
                 for in_ in recv:
-                    data = in_.recv(BUFLEN)
+                    try:
+                        data = in_.recv(BUFLEN)
+                    except:
+                        print "[recv error] "+self.host
+                        exit(-1)
                     if in_ is self.client:
                         out = self.target
                     else:
@@ -178,4 +215,7 @@ def start_server(host='localhost', port=8080, IPv6=False, timeout=60,
         thread.start_new_thread(handler, soc.accept()+(timeout,))
 
 if __name__ == '__main__':
-    start_server()
+    try:
+        start_server(host='0.0.0.0')
+    except:
+        print "[quit] port cannot use. check 'netstat -anp | grep :' or wait 1 minute."
