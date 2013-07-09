@@ -88,10 +88,6 @@ __version__ = '0.1.0 Draft 1'
 BUFLEN = 8192
 VERSION = 'Python Proxy/'+__version__
 HTTPVER = 'HTTP/1.1'
-#allow_hosts=("(php.net|python.org|github.com|akamai.net|gravatar.com|qiita.com|google.com|google.co.jp)")
-allow_hosts=(".*")
-deny_hosts=("(youtube.com|goo.ne.jp)")
-deny_images=("\.(jpg|jpeg|gif|bmp|png|flv|swf)$")
 
 class ConnectionHandler:
     def __init__(self, connection, address, timeout):
@@ -100,25 +96,25 @@ class ConnectionHandler:
         self.timeout = timeout
         self.method, self.path, self.protocol = self.get_base_header()
         self.host = self.get_host()
-        self.acl()
+        conf = AclConfig()
+        if conf.is_allow_hosts or conf.is_deny_hosts or conf.is_deny_images:
+            self.acl(conf)
         if self.method=='CONNECT':
             self.method_CONNECT()
         elif self.method in ('OPTIONS', 'GET', 'HEAD', 'POST', 'PUT',
                              'DELETE', 'TRACE'):
             self.method_others()
+        print "[info] %s" % (self.host)
         self.client.close()
         self.target.close()
 
-    def acl(self):
-        if not re.search(allow_hosts, self.host):
-            print "[block allow] " + self.host
-            exit(0)
-        if re.search(deny_hosts, self.host):
-            print "[block deny ] " + self.host
-            exit(0)
-        if re.search(deny_images, self.path):
-            print "[block image] " + self.path
-            exit(0)
+    def acl(self, conf):
+        if not re.search(conf.allow_hosts, self.host):
+            quit("[deny_hosts1] " + self.host)
+        elif re.search(conf.deny_hosts, self.host):
+            quit("[deny_hosts2] " + self.host)
+        elif re.search(conf.deny_images, self.path):
+            quit("[deny_images] " + self.path)
 
     def get_host(self):
         i = self.path.find(':443')
@@ -201,6 +197,12 @@ class ConnectionHandler:
             if count == time_out_max:
                 break
 
+def quit(message=""):
+    if message != "":
+        print message
+    exit(0)
+
+
 def start_server(host='localhost', port=8080, IPv6=False, timeout=60,
                   handler=ConnectionHandler):
     if IPv6==True:
@@ -208,14 +210,40 @@ def start_server(host='localhost', port=8080, IPv6=False, timeout=60,
     else:
         soc_type=socket.AF_INET
     soc = socket.socket(soc_type)
+    soc.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     soc.bind((host, port))
     print "Serving on %s:%d."%(host, port)#debug
     soc.listen(0)
     while 1:
-        thread.start_new_thread(handler, soc.accept()+(timeout,))
+        try:
+            thread.start_new_thread(handler, soc.accept()+(timeout,))
+        except KeyboardInterrupt:
+            quit("[quit] KeyboardInterrupt.")
+    soc.close()
+
+class AclConfig:
+    port=8080
+    #allow_hosts = ("(php.net|python.org|github.com|akamai.net|gravatar.com|qiita.com|google.com|google.co.jp)")
+    allow_hosts = (".*")
+    deny_hosts = ("(youtube.com|goo.ne.jp)")
+    deny_images = ("\.(jpg|jpeg|gif|bmp|png|flv|swf)$")
+    #
+    # True: check acl. False:pass
+    #is_allow_hosts = True
+    #is_deny_hosts = True
+    #is_deny_images = True
+    is_allow_hosts = False
+    is_deny_hosts = False
+    is_deny_images = False
+    def __init__(self):
+        pass
 
 if __name__ == '__main__':
+    config = AclConfig()
+    port=config.port
     try:
-        start_server(host='0.0.0.0')
-    except:
-        print "[quit] port cannot use. check 'netstat -anp | grep :' or wait 1 minute."
+        start_server(host='0.0.0.0', port=port)
+    except socket.error:
+        #print "[warn] port %d already used. trying use port %d" % (port, port+1)
+        #start_server(host='0.0.0.0', port=port+1)
+        quit("[quit] port %d already used." % port)
